@@ -60,25 +60,41 @@ def calcular_relevancia(nome_produto, palavras_busca):
 
     nome_normalizado = normalizar_texto(nome_produto)
 
+    palavras_nome = nome_normalizado.split()
+
+    texto_completo = " ".join(palavras_nome)
+
     for palavra in palavras_busca:
 
-        # Palavra exata
-        if palavra == nome_normalizado:
-            score += 100
+        # Igual ao nome inteiro
+        if palavra == texto_completo:
+            score += 1000
 
-        # Palavra contida
-        elif palavra in nome_normalizado:
-            score += 20
-
-        # Palavra começa junto
-        if nome_normalizado.startswith(palavra):
-            score += 15
-
-        # Palavra separada
-        palavras_nome = nome_normalizado.split()
-
+        # Palavra isolada exata
         if palavra in palavras_nome:
-            score += 30
+            score += 300
+
+        # Começa com palavra
+        if texto_completo.startswith(palavra):
+            score += 120
+
+        # Palavra parcial
+        if palavra in texto_completo:
+            score += 40
+
+        # Penaliza palavras compostas indesejadas
+        termos_penalizados = [
+            "porta",
+            "suporte",
+            "descanso",
+            "base"
+        ]
+
+        for termo_ruim in termos_penalizados:
+
+            if termo_ruim in palavras_nome and palavra == "copo":
+
+                score -= 150
 
     return score
 
@@ -219,7 +235,10 @@ def buscar_produto(nome: str):
     # Ordena por relevância
     filtrados = sorted(
         filtrados,
-        key=lambda x: x["relevancia"],
+        key=lambda x: (
+            x["relevancia"],
+            x["estoque"]
+        ),
         reverse=True
     )
 
