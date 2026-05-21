@@ -12,6 +12,10 @@ import unicodedata
 load_dotenv()
 
 ACCESS_TOKEN = os.getenv("BLING_ACCESS_TOKEN")
+if not ACCESS_TOKEN:
+    raise Exception(
+        "BLING_ACCESS_TOKEN não encontrado no .env"
+    )
 
 # =========================================================
 # FASTAPI
@@ -62,41 +66,33 @@ def calcular_relevancia(nome_produto, palavras_busca):
 
     palavras_nome = nome_normalizado.split()
 
-    texto_completo = " ".join(palavras_nome)
+    quantidade_palavras = len(palavras_nome)
 
     for palavra in palavras_busca:
 
-        # Igual ao nome inteiro
-        if palavra == texto_completo:
-            score += 1000
-
-        # Palavra isolada exata
+        # Palavra exata isolada
         if palavra in palavras_nome:
             score += 300
 
-        # Começa com palavra
-        if texto_completo.startswith(palavra):
-            score += 120
+            # Quanto mais no início melhor
+            posicao = palavras_nome.index(palavra)
+
+            if posicao == 0:
+                score += 200
+
+            elif posicao == 1:
+                score += 100
 
         # Palavra parcial
-        if palavra in texto_completo:
-            score += 40
+        elif palavra in nome_normalizado:
+            score += 50
 
-        # Penaliza palavras compostas indesejadas
-        termos_penalizados = [
-            "porta",
-            "suporte",
-            "descanso",
-            "base"
-        ]
+    # Penaliza nomes muito longos
+    score -= quantidade_palavras * 3
 
-        for termo_ruim in termos_penalizados:
 
-            if termo_ruim in palavras_nome and palavra == "copo":
 
-                score -= 150
-
-    return score
+    return max(score, 0)
 
 # =========================================================
 # ROTA INICIAL
@@ -142,7 +138,8 @@ def buscar_produto(nome: str):
         response = requests.get(
             url,
             headers=headers,
-            params=params
+            params=params,
+            timeout=15
         )
 
         # Segurança API
@@ -245,6 +242,8 @@ def buscar_produto(nome: str):
     # Remove score interno
     for item in filtrados:
         item.pop("relevancia", None)
+
+    filtrados = filtrados[:20]
 
     return {
 
