@@ -55,14 +55,14 @@ def buscar_produto(nome: str):
 
             nome_produto = produto.get("nome", "").lower()
 
-            if termo in nome_produto:
+            estoque = produto.get("estoque", {}).get("saldoVirtualTotal", 0)
 
+            if termo in nome_produto and estoque > 0:
                 filtrados.append({
                     "nome": produto.get("nome"),
                     "codigo_barras": produto.get("codigo"),
                     "preco_venda": produto.get("preco"),
-                    "estoque": produto.get("estoque", {}).get("saldoVirtualTotal"),
-                    # "status": "Disponível"
+                    "estoque": estoque,
                 })
 
         pagina += 1
