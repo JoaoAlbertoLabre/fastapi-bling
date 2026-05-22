@@ -5,6 +5,7 @@ import os
 import re
 import unicodedata
 import json
+import time
 
 # =========================================================
 # CARREGA CONFIGURAÇÕES
@@ -380,12 +381,13 @@ def buscar_produto(nome: str):
                     })
 
             pagina += 1
+            # ⏳ PAUSA DE SEGURANÇA (RATE LIMIT):
+            # Como o limite do Bling é 3 por segundo, esperar 0.4s entre as páginas
+            # garante no máximo 2.5 requisições por segundo. Totalmente seguro!
+            time.sleep(0.4)
 
-        except Exception as e:
-
-            return {
-                "erro": f"Erro interno de conexão com o Bling: {str(e)}"
-            }
+        except requests.RequestException as e:
+            return {"erro": f"Exceção de comunicação de rede: {str(e)}"}
 
     # ordena por relevância
     filtrados = sorted(
