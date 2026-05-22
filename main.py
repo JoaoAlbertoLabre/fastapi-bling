@@ -147,14 +147,13 @@ def calcular_relevancia(nome_produto, palavras_busca):
 def buscar_produto(nome: str):
     termo_busca = normalizar_texto(nome)
 
-    # ⚡ VERIFICAÇÃO DE CACHE (Retorno instantâneo)
+    # ⚡ VERIFICAÇÃO DE CACHE (Se alguém já buscou, responde em 1ms)
     tempo_atual = time.time()
     if termo_busca in CACHE_PRODUTOS:
         dados_cache = CACHE_PRODUTOS[termo_busca]
         if tempo_atual - dados_cache["timestamp"] < CACHE_TTL_SEGUNDOS:
             return dados_cache["resultado"]
 
-    # Se não está no cache, executa fluxo normal de busca
     tokens = obter_tokens_salvos()
     token_atual = tokens.get("access_token")
     palavras_busca = termo_busca.split()
@@ -162,19 +161,28 @@ def buscar_produto(nome: str):
     pagina = 1
     tentativas_renovacao = 0
 
+    # Criamos uma versão simplificada das palavras para busca parcial (ex: "copo" vira "copo")
+    # Para ajudar a capturar plurais, podemos checar se a palavra buscada está contida no nome
+
     while True:
         url = "https://api.bling.com.br/Api/v3/produtos"
         headers = {"Authorization": f"Bearer {token_atual}"}
-        params = {"pagina": pagina, "limite": 50, "pesquisa": nome, "criterio": 1}
+
+        # REMOVEMOS o "pesquisa": nome direto do Bling para evitar o bug do plural/prefixo da v3
+        # Em vez disso, trazemos os produtos ativos da página para filtrar no Python
+        params = {
+            "pagina": pagina,
+            "limite": 100,  # Aumentamos para 100 para fazer menos requisições por página
+            "situacao": "A"  # Já pede para o Bling trazer só os Ativos
+        }
 
         try:
             response = requests.get(url, headers=headers, params=params, timeout=10)
 
-            # Tratamento Resiliente com Lock de Refresh Duplo
             if response.status_code == 401 and tentativas_renovacao < 1:
                 novo_token = renovar_access_token(token_atual)
                 if not novo_token:
-                    return {"erro": "Falha crítica de autenticação com o provedor de dados."}
+                    return {"erro": "Falha crítica de autenticação."}
                 token_atual = novo_token
                 tentativas_renovacao += 1
                 continue
@@ -185,7 +193,9 @@ def buscar_produto(nome: str):
             dados = response.json()
             produtos = dados.get("data", [])
 
-            if not produtos or pagina > 5:
+            # Se não tem mais produtos ou chegamos ao limite seguro de páginas para a rota
+            # Como a loja tem 2.000 itens, 20 páginas de 100 cobrem o estoque todo se necessário.
+            if not produtos or pagina > 25:
                 break
 
             for produto in produtos:
@@ -193,19 +203,24 @@ def buscar_produto(nome: str):
                 nome_normalizado = normalizar_texto(nome_produto)
 
                 estoque = produto.get("estoque", {}).get("saldoVirtualTotal", 0)
-                situacao = produto.get("situacao", "A")
 
-                if estoque <= 0 or situacao != "A":
+                if estoque <= 0:
                     continue
 
-                # Flexibilidade comercial ANY (Traz mais vendas!)
-                encontrou = any(palavra in nome_normalizado for palavra in palavras_busca)
+                # O SEGREDO DO FILTRO FLEXÍVEL:
+                # Verifica se alguma palavra da busca está contida em qualquer parte do nome do produto
+                # Exemplo: Se palavra for "copo", ela vai dar True em "copos", porque "copo" está dentro de "copos"
+                encontrou = False
+                for palavra in palavras_busca:
+                    if palavra in nome_normalizado:  # Captura "copo" em "copos", "prato" em "pratos"
+                        encontrou = True
+                        break
 
                 if encontrou:
                     score = calcular_relevancia(nome_produto, palavras_busca)
 
                     link_imagem = ""
-                    midia = produto.get("midia", {})
+                    midia = delete = produto.get("midia", {})
                     if midia.get("imagens", {}).get("externas"):
                         link_imagem = midia["imagens"]["externas"][0].get("link", "")
 
@@ -225,6 +240,7 @@ def buscar_produto(nome: str):
         except requests.RequestException as e:
             return {"erro": f"Exceção de comunicação de rede: {str(e)}"}
 
+    # Ordena os resultados pela melhor relevância
     filtrados = sorted(filtrados, key=lambda x: (x["relevancia"], x["estoque"]), reverse=True)
     for item in filtrados:
         item.pop("relevancia", None)
@@ -235,7 +251,7 @@ def buscar_produto(nome: str):
         "produtos": filtrados[:20]
     }
 
-    # 💾 GRAVA O RESULTADO NO CACHE ANTES DE RETORNAR
+    # Salva no cache para que nas próximas mensagens a resposta seja instantânea
     CACHE_PRODUTOS[termo_busca] = {
         "timestamp": tempo_atual,
         "resultado": resultado_final
