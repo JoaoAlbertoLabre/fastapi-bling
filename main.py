@@ -7,168 +7,273 @@ import unicodedata
 import json
 
 # =========================================================
-# CARREGA CONFIGURAÇÕES E ARQUIVO DE TOKENS
+# CARREGA CONFIGURAÇÕES
 # =========================================================
+
 load_dotenv()
 
 CLIENT_ID = os.getenv("BLING_CLIENT_ID")
 CLIENT_SECRET = os.getenv("BLING_CLIENT_SECRET")
+
 TOKEN_FILE = "bling_tokens.json"
 
-# Inicialização fallback caso não exista o arquivo JSON de tokens ainda
+# =========================================================
+# CRIA ARQUIVO DE TOKENS SE NÃO EXISTIR
+# =========================================================
+
 if not os.path.exists(TOKEN_FILE):
+
     token_inicial = {
         "access_token": os.getenv("BLING_ACCESS_TOKEN", ""),
         "refresh_token": os.getenv("BLING_REFRESH_TOKEN", "")
     }
+
     with open(TOKEN_FILE, "w") as f:
         json.dump(token_inicial, f)
 
 # =========================================================
 # FASTAPI
 # =========================================================
+
 app = FastAPI(
     title="Pratic Utilidades API",
-    description="API Inteligente de Produtos integrada ao Bling v3",
-    version="1.1"
+    description="API Inteligente integrada ao Bling",
+    version="2.0"
 )
 
-
 # =========================================================
-# FUNÇÕES DE GERENCIAMENTO DE TOKEN (OAUTH 2.0)
+# GERENCIAMENTO DE TOKENS
 # =========================================================
 
 def obter_tokens_salvos():
-    """Lê os tokens atuais do arquivo local."""
+
     try:
         with open(TOKEN_FILE, "r") as f:
             return json.load(f)
-    except Exception:
-        return {"access_token": "", "refresh_token": ""}
+
+    except Exception as e:
+
+        print("Erro ao ler tokens:", str(e))
+
+        return {
+            "access_token": "",
+            "refresh_token": ""
+        }
 
 
 def atualizar_token_no_arquivo(access_token, refresh_token):
-    """Salva os novos tokens gerados."""
-    tokens = {"access_token": access_token, "refresh_token": refresh_token}
+
+    dados = {
+        "access_token": access_token,
+        "refresh_token": refresh_token
+    }
+
     with open(TOKEN_FILE, "w") as f:
-        json.dump(tokens, f)
+        json.dump(dados, f)
 
 
 def renovar_access_token():
-    """Usa o REFRESH_TOKEN para obter um novo ACCESS_TOKEN válido do Bling."""
+
     tokens = obter_tokens_salvos()
+
     refresh_token = tokens.get("refresh_token")
 
-    if not refresh_token or not CLIENT_ID or not CLIENT_SECRET:
-        print("Erro: Credenciais OAuth ausentes no .env ou arquivo de tokens.")
+    if not refresh_token:
+
+        print("❌ Refresh token ausente")
+
         return None
 
     url = "https://www.bling.com.br/Api/v3/oauth/token"
-    dados = {
+
+    payload = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token
     }
 
     try:
-        # O Bling v3 aceita autenticação básica com Client ID e Client Secret
-        resposta = requests.post(url, data=dados, auth=(CLIENT_ID, CLIENT_SECRET), timeout=10)
-        if resposta.status_code == 200:
-            novos_dados = resposta.json()
-            novo_access = novos_dados["access_token"]
-            novo_refresh = novos_dados.get("refresh_token", refresh_token)  # Retorna o mesmo ou um novo
 
-            atualizar_token_no_arquivo(novo_access, novo_refresh)
-            print("🔄 Token do Bling renovado com sucesso automaticamente!")
-            return novo_access
-        else:
-            print(f"Erro ao renovar token. Status: {resposta.status_code}, Resposta: {resposta.text}")
+        resposta = requests.post(
+            url,
+            data=payload,
+            auth=(CLIENT_ID, CLIENT_SECRET),
+            timeout=15
+        )
+
+        print("STATUS REFRESH:", resposta.status_code)
+        print("RESPOSTA REFRESH:", resposta.text)
+
+        if resposta.status_code != 200:
             return None
+
+        dados = resposta.json()
+
+        novo_access = dados.get("access_token")
+        novo_refresh = dados.get("refresh_token")
+
+        if not novo_access:
+            return None
+
+        # salva os novos tokens
+        atualizar_token_no_arquivo(
+            novo_access,
+            novo_refresh or refresh_token
+        )
+
+        print("✅ Token renovado com sucesso")
+
+        return novo_access
+
     except Exception as e:
-        print(f"Exceção ao tentar renovar token: {e}")
+
+        print("❌ Erro ao renovar token:", str(e))
+
         return None
 
-
 # =========================================================
-# FUNÇÕES AUXILIARES DE BUSCA
+# FUNÇÕES AUXILIARES
 # =========================================================
 
 def normalizar_texto(texto):
+
     if not texto:
         return ""
+
     texto = texto.lower()
-    # Remove acentos
-    texto = unicodedata.normalize('NFKD', texto).encode('ASCII', 'ignore').decode('ASCII')
-    # Remove caracteres especiais
+
+    # remove acentos
+    texto = unicodedata.normalize(
+        'NFKD',
+        texto
+    ).encode(
+        'ASCII',
+        'ignore'
+    ).decode(
+        'ASCII'
+    )
+
+    # remove caracteres especiais
     texto = re.sub(r'[^a-zA-Z0-9\s]', ' ', texto)
-    # Remove espaços duplicados
+
+    # remove espaços duplicados
     texto = re.sub(r'\s+', ' ', texto)
+
     return texto.strip()
 
 
 def calcular_relevancia(nome_produto, palavras_busca):
+
     score = 0
+
     nome_normalizado = normalizar_texto(nome_produto)
+
     palavras_nome = nome_normalizado.split()
+
     quantidade_palavras = len(palavras_nome)
 
     for palavra in palavras_busca:
-        if palabra in palavras_nome:
+
+        # CORREÇÃO DO BUG
+        if palavra in palavras_nome:
+
             score += 300
+
             posicao = palavras_nome.index(palavra)
+
             if posicao == 0:
                 score += 200
+
             elif posicao == 1:
                 score += 100
+
         elif palavra in nome_normalizado:
+
             score += 50
 
     score -= quantidade_palavras * 3
+
     return max(score, 0)
 
-
 # =========================================================
-# ROTAS DA API
+# ROTA INICIAL
 # =========================================================
 
 @app.get("/")
 def inicio():
+
     return {
         "status": "API online",
         "empresa": "Pratic Utilidades",
-        "sistema": "Busca Inteligente de Estoque"
+        "sistema": "Busca Inteligente de Produtos"
     }
 
+# =========================================================
+# BUSCA DE PRODUTOS
+# =========================================================
 
 @app.get("/produto")
 def buscar_produto(nome: str):
+
     tokens = obter_tokens_salvos()
+
     token_atual = tokens.get("access_token")
 
     termo_busca = normalizar_texto(nome)
+
     palavras_busca = termo_busca.split()
+
     filtrados = []
+
     pagina = 1
 
     tentativas_renovacao = 0
 
     while True:
+
         url = "https://api.bling.com.br/Api/v3/produtos"
-        headers = {"Authorization": f"Bearer {token_atual}"}
-        params = {"pagina": pagina, "limite": 100}
+
+        headers = {
+            "Authorization": f"Bearer {token_atual}"
+        }
+
+        # melhora busca no próprio Bling
+        params = {
+            "pagina": pagina,
+            "limite": 100,
+            "pesquisa": nome
+        }
 
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=15)
 
-            # Tratamento inteligente de erro 401 (Token Expirado)
+            response = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=15
+            )
+
+            # TOKEN EXPIRADO
             if response.status_code == 401 and tentativas_renovacao < 1:
-                token_atual = renovar_access_token()
-                if token_atual:
-                    tentativas_renovacao += 1
-                    continue  # Refaz o mesmo loop da mesma página com o novo token
-                else:
-                    return {"erro": "Token expirado e falha ao renovar via Refresh Token."}
 
+                print("🔄 Token expirado. Tentando renovar...")
+
+                token_atual = renovar_access_token()
+
+                if token_atual:
+
+                    tentativas_renovacao += 1
+
+                    continue
+
+                else:
+
+                    return {
+                        "erro": "Token expirado e falha ao renovar via Refresh Token."
+                    }
+
+            # ERRO GERAL
             if response.status_code != 200:
+
                 return {
                     "erro": "Erro ao consultar Bling",
                     "status_code": response.status_code,
@@ -176,120 +281,279 @@ def buscar_produto(nome: str):
                 }
 
             dados = response.json()
+
             produtos = dados.get("data", [])
 
             if not produtos:
                 break
 
             for produto in produtos:
+
                 nome_produto = produto.get("nome", "")
+
                 nome_normalizado = normalizar_texto(nome_produto)
 
-                # Mapeamento v3 correto da estrutura de estoque saldo físico/virtual
-                estoque = produto.get("estoque", {}).get("saldoVirtualTotal", 0)
+                estoque = produto.get(
+                    "estoque",
+                    {}
+                ).get(
+                    "saldoVirtualTotal",
+                    0
+                )
+
                 situacao = produto.get("situacao", "A")
 
-                if estoque <= 0 or situacao != "A":
+                # ignora sem estoque
+                if estoque <= 0:
                     continue
 
-                # Verifica correspondência das palavras buscadas
-                encontrou = all(palavra in nome_normalizado for palavra in palavras_busca)
+                # ignora inativos
+                if situacao != "A":
+                    continue
+
+                # BUSCA FLEXÍVEL
+                encontrou = any(
+                    palavra in nome_normalizado
+                    for palavra in palavras_busca
+                )
 
                 if encontrou:
-                    score = calcular_relevancia(nome_produto, palavras_busca)
 
-                    # Tratamento seguro da URL da imagem principal no Bling v3
+                    score = calcular_relevancia(
+                        nome_produto,
+                        palavras_busca
+                    )
+
+                    # imagem
                     link_imagem = ""
+
                     midia = produto.get("midia", {})
+
                     if midia.get("imagens", {}).get("externas"):
-                        link_imagem = midia["imagens"]["externas"][0].get("link", "")
+
+                        link_imagem = midia[
+                            "imagens"
+                        ][
+                            "externas"
+                        ][0].get(
+                            "link",
+                            ""
+                        )
+
                     elif midia.get("imagens", {}).get("internas"):
-                        link_imagem = midia["imagens"]["internas"][0].get("link", "")
+
+                        link_imagem = midia[
+                            "imagens"
+                        ][
+                            "internas"
+                        ][0].get(
+                            "link",
+                            ""
+                        )
 
                     filtrados.append({
+
                         "relevancia": score,
+
                         "nome": nome_produto,
-                        "codigo_barras": produto.get("codigo", ""),
-                        "preco_venda": produto.get("preco", 0.0),
+
+                        "codigo_barras": produto.get(
+                            "codigo",
+                            ""
+                        ),
+
+                        "preco_venda": produto.get(
+                            "preco",
+                            0.0
+                        ),
+
                         "estoque": estoque,
+
                         "imagem": link_imagem,
-                        "descricao_curta": produto.get("descricaoCurta", ""),
+
+                        "descricao_curta": produto.get(
+                            "descricaoCurta",
+                            ""
+                        ),
+
                         "status": "Disponível"
                     })
 
             pagina += 1
 
         except Exception as e:
-            return {"erro": f"Erro interno de conexão com o Bling: {str(e)}"}
 
-    # Ordenação por relevância e limite de resposta
-    filtrados = sorted(filtrados, key=lambda x: (x["relevancia"], x["estoque"]), reverse=True)
+            return {
+                "erro": f"Erro interno de conexão com o Bling: {str(e)}"
+            }
+
+    # ordena por relevância
+    filtrados = sorted(
+        filtrados,
+        key=lambda x: (
+            x["relevancia"],
+            x["estoque"]
+        ),
+        reverse=True
+    )
+
+    # remove relevância da resposta final
     for item in filtrados:
         item.pop("relevancia", None)
 
     filtrados = filtrados[:20]
-    return {"busca": nome, "quantidade": len(filtrados), "produtos": filtrados}
 
+    return {
+        "busca": nome,
+        "quantidade": len(filtrados),
+        "produtos": filtrados
+    }
+
+# =========================================================
+# BUSCA POR CÓDIGO DE BARRAS
+# =========================================================
 
 @app.get("/codigo/{codigo}")
 def buscar_codigo_barras(codigo: str):
+
     tokens = obter_tokens_salvos()
+
     token_atual = tokens.get("access_token")
 
-    tentativas_renovacao = 0
     pagina = 1
 
+    tentativas_renovacao = 0
+
     while True:
+
         url = "https://api.bling.com.br/Api/v3/produtos"
-        headers = {"Authorization": f"Bearer {token_atual}"}
-        params = {"pagina": pagina, "limite": 100,
-                  "codigo": codigo}  # Otimização: Passar o código direto por parâmetro diminui o laço do Bling
+
+        headers = {
+            "Authorization": f"Bearer {token_atual}"
+        }
+
+        params = {
+            "pagina": pagina,
+            "limite": 100,
+            "codigo": codigo
+        }
 
         try:
-            response = requests.get(url, headers=headers, params=params, timeout=15)
 
+            response = requests.get(
+                url,
+                headers=headers,
+                params=params,
+                timeout=15
+            )
+
+            # TOKEN EXPIRADO
             if response.status_code == 401 and tentativas_renovacao < 1:
+
                 token_atual = renovar_access_token()
+
                 if token_atual:
+
                     tentativas_renovacao += 1
+
                     continue
+
                 else:
-                    return {"encontrado": False, "mensagem": "Token expirado e falha na renovação"}
+
+                    return {
+                        "encontrado": False,
+                        "mensagem": "Falha ao renovar token"
+                    }
 
             if response.status_code != 200:
-                return {"erro": "Erro ao consultar Bling", "status_code": response.status_code}
+
+                return {
+                    "erro": "Erro ao consultar Bling",
+                    "status_code": response.status_code,
+                    "resposta": response.text
+                }
 
             dados = response.json()
+
             produtos = dados.get("data", [])
 
             if not produtos:
                 break
 
             for produto in produtos:
-                codigo_produto = str(produto.get("codigo", ""))
-                estoque = produto.get("estoque", {}).get("saldoVirtualTotal", 0)
+
+                codigo_produto = str(
+                    produto.get("codigo", "")
+                )
+
+                estoque = produto.get(
+                    "estoque",
+                    {}
+                ).get(
+                    "saldoVirtualTotal",
+                    0
+                )
 
                 if codigo == codigo_produto and estoque > 0:
+
                     link_imagem = ""
+
                     midia = produto.get("midia", {})
+
                     if midia.get("imagens", {}).get("externas"):
-                        link_imagem = midia["imagens"]["externas"][0].get("link", "")
+
+                        link_imagem = midia[
+                            "imagens"
+                        ][
+                            "externas"
+                        ][0].get(
+                            "link",
+                            ""
+                        )
+
                     elif midia.get("imagens", {}).get("internas"):
-                        link_imagem = midia["imagens"]["internas"][0].get("link", "")
+
+                        link_imagem = midia[
+                            "imagens"
+                        ][
+                            "internas"
+                        ][0].get(
+                            "link",
+                            ""
+                        )
 
                     return {
+
                         "encontrado": True,
+
                         "produto": {
+
                             "nome": produto.get("nome"),
+
                             "codigo_barras": codigo_produto,
+
                             "preco_venda": produto.get("preco"),
+
                             "estoque": estoque,
+
                             "imagem": link_imagem,
-                            "descricao_curta": produto.get("descricaoCurta", "")
+
+                            "descricao_curta": produto.get(
+                                "descricaoCurta",
+                                ""
+                            )
                         }
                     }
-            pagina += 1
-        except Exception as e:
-            return {"erro": f"Erro de conexão: {str(e)}"}
 
-    return {"encontrado": False, "mensagem": "Produto não encontrado ou sem estoque"}
+            pagina += 1
+
+        except Exception as e:
+
+            return {
+                "erro": f"Erro de conexão: {str(e)}"
+            }
+
+    return {
+        "encontrado": False,
+        "mensagem": "Produto não encontrado ou sem estoque"
+    }
