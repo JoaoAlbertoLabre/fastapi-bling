@@ -153,7 +153,7 @@ def normalizar_texto(texto):
     )
 
     # remove caracteres especiais
-    texto = re.sub(r'[^a-zA-Z0-9\s]', ' ', texto)
+    texto = re.sub(r"[^a-zA-Z0-9\s]", ' ', texto)
 
     # remove espaços duplicados
     texto = re.sub(r'\s+', ' ', texto)
